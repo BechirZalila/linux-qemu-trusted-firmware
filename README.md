@@ -246,17 +246,87 @@ aarch64-linux-readelf -h u-boot
 
 Look for **"Entry point address"** in the ELF header. It should read `0x60000000`, confirming that U-Boot will start at `0x60000000`. If it shows `0x40000000`, then the text base config did not take effect – re-check the menuconfig step.
 
-U-Boot is now ready, but we need to integrate it with TF-A so that it will be loaded as BL33. The next step will combine TF-A (BL1, BL2, BL31) and U-Boot (BL33) into a single flash image. This will be done after compiling the kernel image.
+U-Boot is now ready, but we need to integrate it with TF-A so that it will be loaded as BL33. The next step will combine TF-A (BL1, BL2, BL31) and U-Boot (BL33) into a single flash image. This will be done in the next section.
+
+### 4. Creating a Disk Image and Partitions
+
+We create an empty image file of size 256 MB to simulate an SD card or eMMC. Then we partition it into two: a FAT32 boot partition and an ext4 root partition.
+
+```bash
+dd if=/dev/zero of=disk.img bs=1M count=256
+```
+
+This creates a 256 MB file filled with zeros. The dd command uses a block size of 1MiB and writes 256 blocks (resulting in 256 MiB). Next, partition the image with parted:
+
+```bash
+parted disk.img --script mklabel msdos  
+parted disk.img --script mkpart primary fat32 1MiB 100MiB  
+parted disk.img --script mkpart primary ext4 100MiB 100%
+```
+
+Explanation: mklabel msdos creates a Master Boot Record (MBR) partition table (also known as MS-DOS label) on the image. We choose MBR for simplicity (GPT could also be used, but U-Boot and our needs are fine with MBR). Then we create two primary partitions. The first partition is of type FAT32, starting at 1MiB and ending at 100MiB. We start at 1MiB instead of 0 to align the partition and leave space for the MBR and potential bootloader metadata; 1MiB alignment is a common practice to ensure proper alignment for performance. The size of the first partition will be roughly 99 MB (from 1 to 100). The second partition is from 100MiB to 100% (end of the disk), occupying the rest (~156 MB) and will be ext4. After these commands, the layout is:
+- Partition 1 (vda1): ~99 MB FAT32, for boot files (kernel Image, device tree, and U-Boot environment file).
+- Partition 2 (vda2): ~156 MB ext4, for the root filesystem (BusyBox and others).
+
+Now we format these partitions with the appropriate filesystems. Because disk.img is not a real device, we use a loopback device. We can have Linux map the image as a loop device and create sub-devices for its partitions:
+
+```bash
+sudo losetup -fP --show disk.img
+```
+
+The -fP options find the first free loop device and partition the device, respectively. The --show prints the loop device name. Suppose it returns /dev/loop0. The -P flag causes the kernel to scan the partition table of /dev/loop0 and create /dev/loop0p1 and /dev/loop0p2 for the partitions. We can confirm with lsblk or sudo fdisk -l /dev/loop0.
+
+Now format the partitions:
+
+```bash
+sudo mkfs.vfat -F 32 /dev/loop0p1  
+sudo mkfs.ext4 -L ROOT /dev/loop0p2
+```
+
+We make the first partition a FAT32 filesystem (-F 32 for FAT32) and the second an ext4 filesystem, labeling it "ROOT" (this label is optional, but can help identify the partition). (If you get an error using mkfs.vfat directly on the image with an offset, note that older utilties might require mapping the partition via loop as we did – which is why we use losetup. The commented commands in our logs show an attempt to format by offset which is less straightforward than using loop devices.)
+
+After formatting, detach the loop device for now:
+
+```bash
+sudo losetup -d /dev/loop0
+```
+
+We now have a disk.img with two empty filesystems. Next, we will populate them: the FAT32 partition with the U-Boot environment file, the kernel and device tree, and the ext4 partition with a minimal root filesystem.
+
+### 5. Creating the Flash Image (BL1 + FIP)
+
+
 
 ### 4. Compile the Linux Kernel
 
+For our ARMv8 Linux system, we use the mainline Linux kernel. Here we choose version `6.1.128` (a stable LTS release in the `6.1` series). Obtain and extract the kernel source:
+
 ```bash
-git clone https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git
+wget -c https://mirrors.edge.kernel.org/pub/linux/kernel/v6.x/linux-6.1.128.tar.xz
+tar xf linux-6.1.128.tar.xz
+mv linux-6.1.128 linux
 cd linux
-git checkout v6.1.128
-make ARCH=arm64 CROSS_COMPILE=aarch64-unknown-linux-gnu- defconfig
-make ARCH=arm64 CROSS_COMPILE=aarch64-unknown-linux-gnu- -j$(nproc) Image dtbs modules
 ```
+
+Now configure the kernel for the virt platform. The arm64 architecture kernel has a default configuration that includes support for generic devices:
+
+```bash
+make defconfig   # generates a default arm64 kernel config
+```
+
+The default config (defconfig) for arm64 should enable drivers for the PL011 serial (used for ttyAMA0) and virtio devices, which are crucial for QEMU’s virt machine. It typically also enables devtmpfs and other basic features. However, it might not include every feature we need. We can customize it with menuconfig:
+
+```bash
+make menuconfig
+```
+
+For our simple system, we don’t need to change much beyond ensuring virtio and ext4 support are built-in. If in doubt, the default config on arm64 is generally sufficient for booting on QEMU virt. After any changes, save the config.Now build the kernel image:
+
+```bash
+make -j$(nproc) Image
+```
+
+This compiles the Linux kernel and produces an uncompressed binary image at arch/arm64/boot/Image. (We use Image rather than Image.gz to keep it simple – U-Boot can boot the uncompressed Image, and we built U-Boot’s booti command to handle both compressed and uncompressed.) If the build succeeds, arch/arm64/boot/Image is our kernel binary.
 
 ### 5. Prepare the Root Filesystem
 
