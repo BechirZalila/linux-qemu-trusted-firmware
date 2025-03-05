@@ -295,9 +295,63 @@ We now have a disk.img with two empty filesystems. Next, we will populate them: 
 
 ### 5. Creating the Flash Image (BL1 + FIP)
 
-Recall that QEMU’s virt platform expects a flash image where BL1 is at offset 0 and the FIP (containing BL2, BL31, BL33) is at offset 0x40000 (256 KB). We will use the TF-A tool fip to bundle BL2, BL31, and BL33, and then concatenate BL1.
+Recall that QEMU's virt platform expects a flash image where BL1 is at offset 0 and the FIP (containing BL2, BL31, BL33) is at offset `0x40000` (256 KB). We will use the TF-A tool fip to bundle BL2, BL31, and BL33, and then concatenate BL1.
 
 Go back to the TF-A directory:
+
+```bash
+cd arm-trusted-firmware
+```
+
+We will rebuild TF-A with U-Boot included as BL33. Clean the previous build and run make with BL33 specified:
+
+```bash
+make distclean  
+make PLAT=qemu ARCH=aarch64 CROSS_COMPILE=${CROSS_COMPILE} DEBUG=1 \
+     BL33=../u-boot/u-boot.bin all fip
+```
+
+This command does a full rebuild (`all`) and creates a firmware image package (`fip`). By specifying `BL33=../u-boot/u-boot.bin`, we include the U-Boot binary as the BL33 payload in the FIP. After this, in `build/qemu/debug/` we will have a new `fip.bin` alongside a new `bl1.bin` (and other BL images). The FIP contains BL2, BL31, BL33 = U-Boot (and potentially empty slots for BL32 since we didn't specify one).
+
+Now we create a single flash image file. We need to allocate space for BL1 up to 256KB, then the FIP after that. A simple and reliable method is using `dd` to write `bl1.bin` into the beginning of a file and `fip.bin` at the 256KB offset:
+
+```bash
+cd build/qemu/debug  
+dd if=bl1.bin of=flash.bin bs=4096 conv=notrunc  
+dd if=fip.bin of=flash.bin bs=4096 seek=64 conv=notrunc
+```
+
+The first `dd` writes BL1 into `flash.bin` with a block size of 4096 bytes (4KB) and `conv=notrunc` to not truncate the output file. The second dd writes `fip.bin` at an offset: `seek=64` means skip 64 blocks of 4096 bytes = 256KB. This ensures `flash.bin` has BL1 starting at 0 and FIP starting at `0x40000`. The size of `flash.bin` will be at least (256KB + size of `fip.bin`). Typically, TF-A's documentation suggests flash size around 4MB for QEMU `virt`, which is sufficient for our BL1+FIP. The exact size isn't critical as long as both pieces fit. Now `flash.bin` is the firmware image we will give to QEMU as the `-bios`.
+
+We can now launch QEMU, combining everything. We must be at the top level work directory in order for the QEMU command to work.
+
+```bash
+qemu-system-aarch64 -machine virt,secure=on -cpu cortex-a53 -m 1024 \
+   -smp 2 -nographic -serial mon:stdio \
+   -bios arm-trusted-firmware/build/qemu/debug/flash.bin \
+   -device virtio-blk-device,drive=hd0 \
+   -drive if=none,id=hd0,file=disk.img,format=raw
+```
+
+Let's decode these options:
+- `-machine virt,secure=on`: Select the "virt" generic ARMv8 board in secure mode. `secure=on` enables two worlds (Secure and Normal), which is necessary for TF-A to run (it will run in Secure EL3). This also means QEMU will boot from the provided secure firmware (`flash.bin`).
+- `-cpu cortex-a53`: Emulate a Cortex-A53 CPU (ARMv8 little core). This CPU has EL3 support and is compatible with our use of TrustZone. Cortex-A53 is a reasonable choice (Cortex-A57 or others could be used; A53 is fine and was used in Raspberry Pi 3 for example).
+- `-m 1024 -smp 2`: Allocate 1024 MB of RAM and 2 CPU cores to the VM. QEMU will reflect these in the generated device tree (memory node size `0x40000000` for 1GB, and two CPU nodes) which should match our earlier device tree assumptions.
+- `-nographic`: Run with no graphical output (no GUI), and redirect serial to the console.
+- `-serial mon:stdio`: This multiplexes the QEMU monitor and the serial console onto QEMU's standard input/output. Upon startup, you see the serial output; to switch to the QEMU monitor (to issue QEMU commands), one typically presses Ctrl-A C when using `mon:stdio`. This setup allows us to interact with U-Boot's serial console via the terminal.
+- `-bios flash.bin`: Provide the binary firmware to load at reset (instead of QEMU's default BIOS or UEFI). This `flash.bin` is loaded at address `0x0` in the secure memory. QEMU will start executing at the reset vector, which is in BL1 inside our `flash.bin`. From there TF-A takes over the early boot.
+- `-device virtio-blk-device,drive=hd0` `-drive if=none,id=hd0,file=disk.img,format=raw`: This attaches our `disk.img` as a virtio block device. The `-drive if=none,id=hd0,...` defines a drive backing file, and `-device virtio-blk-device,drive=hd0` exposes it to the guest as a virtio-blk PCI device. In the guest Linux, this will appear as `/dev/vda`. U-Boot will also see a `virtio 0` device representing this disk. We use virtio-blk because it's a simple para-virtualized storage device suited for QEMU; it will use the Virtio driver.
+
+If all is set up correctly, running this command should produce output on the console. Let's walk through the expected boot sequence:
+- TF-A BL1 runs first (very briefly). With `DEBUG=1`, you'll see some TF-A log messages like:
+  `NOTICE: BL1: v2.12(release):` ... and then messages about loading BL2, etc. BL1 will load BL2 (from FIP).
+- TF-A BL2 executes. BL2 will load BL31 and U-Boot (BL33). You may see logs such as:
+  `NOTICE: BL2: Loading BL31` and `NOTICE: BL2: Loading BL33` with addresses. BL2 also might print a notice about transferring control to BL31.
+- TF-A BL31 executes (EL3 runtime). It will initialize and then drop to the non-secure world by invoking BL33 at `0x60000000`. We might see a `NOTICE: BL31: ...` and then perhaps PSCI init messages. BL31 uses SMC/HVC for PSCI as needed. At this point, control goes to U-Boot.
+- U-Boot (BL33) starts. You should see the familiar U-Boot banner on the serial console: e.g.,
+  `U-Boot 2025.01 [...]` and a message about DRAM, etc., followed by the U-Boot command prompt =>. If U-Boot output doesn't appear, something is wrong (check TF-A logs or U-Boot integration). If it appears, we have a working TF-A + U-Boot stack.
+
+At this level, U-Boot is ready to boot the Linux kernel, which will be built in the next section. 
 
 ### 4. Compile the Linux Kernel
 
@@ -316,19 +370,19 @@ Now configure the kernel for the virt platform. The arm64 architecture kernel ha
 make defconfig   # generates a default arm64 kernel config
 ```
 
-The default config (defconfig) for arm64 should enable drivers for the PL011 serial (used for ttyAMA0) and virtio devices, which are crucial for QEMU’s virt machine. It typically also enables devtmpfs and other basic features. However, it might not include every feature we need. We can customize it with menuconfig:
+The default config (defconfig) for arm64 should enable drivers for the PL011 serial (used for ttyAMA0) and virtio devices, which are crucial for QEMU's virt machine. It typically also enables devtmpfs and other basic features. However, it might not include every feature we need. We can customize it with menuconfig:
 
 ```bash
 make menuconfig
 ```
 
-For our simple system, we don’t need to change much beyond ensuring virtio and ext4 support are built-in. If in doubt, the default config on arm64 is generally sufficient for booting on QEMU virt. After any changes, save the config.Now build the kernel image:
+For our simple system, we don't need to change much beyond ensuring virtio and ext4 support are built-in. If in doubt, the default config on arm64 is generally sufficient for booting on QEMU virt. After any changes, save the config.Now build the kernel image:
 
 ```bash
 make -j$(nproc) Image
 ```
 
-This compiles the Linux kernel and produces an uncompressed binary image at arch/arm64/boot/Image. (We use Image rather than Image.gz to keep it simple – U-Boot can boot the uncompressed Image, and we built U-Boot’s booti command to handle both compressed and uncompressed.) If the build succeeds, arch/arm64/boot/Image is our kernel binary.
+This compiles the Linux kernel and produces an uncompressed binary image at arch/arm64/boot/Image. (We use Image rather than Image.gz to keep it simple – U-Boot can boot the uncompressed Image, and we built U-Boot's booti command to handle both compressed and uncompressed.) If the build succeeds, arch/arm64/boot/Image is our kernel binary.
 
 ### 5. Prepare the Root Filesystem
 
