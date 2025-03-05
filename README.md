@@ -416,6 +416,23 @@ In all cases the found DTB must be decompiled and then recompiled again:
 
 ```bash
 dtc -I dtb -O dts -o virt.dts qemu.dtb
+```
+
+Open virt.dts in an editor and find the psci node. It should look like:
+
+```c
+psci {  
+    compatible = "arm,psci-1.0", "arm,psci-0.2";  
+    method = "smc";  
+    ...  
+};  
+```
+
+If method is `"hvc"`, change it to `"smc"`. Save the DTS. If other adjustments are needed (for example, ensure the memory size matches the -m 1024 we will use, and CPU count matches -smp 2), check those as well: the `/memory` node reg should be `0x40000000` with size `0x40000000` (1GB) for 1024 MB, and the `/cpus` node should have 2 CPU subnodes for smp 2. QEMU’s dumpdtb should already reflect these parameters if provided.
+
+Now compile the DTS back to DTB:
+
+```bash
 dtc -I dts -O dtb -o virt.dtb virt.dts
 ```
 
@@ -443,6 +460,8 @@ qemu-system-aarch64 -machine virt,secure=on -cpu cortex-a53 -m 1024 -smp 2 \
 => setenv bootargs "console=ttyAMA0 root=/dev/vda2 rw"
 => booti ${kernel_addr_r} - ${fdt_addr}
 ```
+
+`console=ttyAMA0` directs kernel logs to the first PL011 UART (which QEMU maps to the host’s stdio). This is essential to see output. `root=/dev/vda2` tells the kernel to use the second partition of the virtio disk as the root filesystem. `/dev/vda` is the typical name of the first virtio block device in Linux (with partitions vda1, vda2, etc.). We will put our rootfs on vda2. The rw flag mounts it read-write. We could also specify `rootfstype=ext4` to be explicit, but the kernel can auto-detect the filesystem type. If the root device might not be ready immediately (not an issue for virtio, but for safety on real hardware one might add `rootdelay=1`), we could add a short root delay. In our QEMU case, it should not be needed. We will set this bootargs in U-Boot later.
 
 If the kernel hangs at a Kernel Panic saying it cannot mount the root file system, this is normal since wi did not build it yet. We can automate the kernel startup in U-boot:
 
