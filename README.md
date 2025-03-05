@@ -96,7 +96,7 @@ This sets up a `.config` for building an AArch64 (64-bit ARM) Linux toolchain fo
 In the menuconfig interface, we adjust some options:
 
 - Under "Path and misc options", set the local tarball directory to /opt/emblin/armv8-lab/tarballs. This caches source tarballs (Linux kernel headers, GCC, Binutils, etc.) in our directory to avoid re-downloading.
-- Under "Toolchain options", you may set a shorter tuple’s alias for convenience. For example, change the tuple alias to aarch64-linux (so the cross tools will be named e.g. aarch64-linux-gcc).
+- Under "Toolchain options", you may set a shorter tuple's alias for convenience. For example, change the tuple alias to aarch64-linux (so the cross tools will be named e.g. aarch64-linux-gcc).
 - Under "Operating System", select a Linux kernel header version. We choose 6.0.12 for a modern kernel headers.
 - Under "C-library", select musl instead of glibc. Musl is a lightweight libc which simplifies our static linking later (BusyBox) and avoids large glibc dependencies in the target.
 - Under "C compiler", select GCC version. For instance, GCC 13.3.0.
@@ -154,7 +154,7 @@ qemu-aarch64 -L ~/x-tools/aarch64-rpi3-linux-musl/aarch64-rpi3-linux-musl/sysroo
 Hello world
 ```
 
-This points QEMU to the cross-compiler’s sysroot for shared libraries. (For statically linked binaries, this is not needed.)
+This points QEMU to the cross-compiler's sysroot for shared libraries. (For statically linked binaries, this is not needed.)
 
 **Note:** Using **Crosstool-NG** is one way to obtain a cross-toolchain. Alternatively, one could install the package `gcc-aarch64-linux-gnu` which provides the cross-compiler and skip the above steps. In either case, ensure `CROSS_COMPILE` (prefix for toolchain binaries) is set (e.g., `aarch64-linux-`) and `ARCH=arm64` is used for Linux builds.
 
@@ -166,7 +166,7 @@ cd crosstool-ng
 ```
 
 We will now obtain the source code for the components we need: TF-A, U-Boot, Linux kernel, and BusyBox:
-- ARM Trusted Firmware-A (TF-A): We’ll use the official Arm repository.
+- ARM Trusted Firmware-A (TF-A): We'll use the official Arm repository.
 - U-Boot Bootloader: We use a recent stable release from Denx.
 - Linux Kernel: We will use a long-term support kernel (6.1.x series).
 - BusyBox: We will use the latest stable BusyBox for user-space.
@@ -175,7 +175,7 @@ We will download these as needed in the following sections.
 
 ### 2. Build Trusted Firmware-A (TF-A)
 
-Trusted Firmware-A provides the secure-world boot stages (BL1, BL2, BL31) for ARMv8. In QEMU’s `virt` machine, TF-A’s BL1 is the first code to run at reset, and it is loaded at the reset vector (0x0 in secure memory) via the QEMU `-bios` option. BL1 will initialize EL3, choose a primary CPU, and eventually load BL2. BL2, in turn, will load BL31 (and any optional BL32 secure payload) and the BL33 image into memory. In our setup, we will not use a BL32 (secure OS like OP-TEE) for simplicity, and will use U-Boot as BL33 (non-secure firmware). BL2 also prepares the device tree for the next stage: on QEMU, BL2 patches the DTB to add a PSCI node and set the CPU enable methods (how secondary CPUs are brought up). This ensures the Linux kernel (or U-Boot) gets a correct device tree with PSCI information.
+Trusted Firmware-A provides the secure-world boot stages (BL1, BL2, BL31) for ARMv8. In QEMU's `virt` machine, TF-A's BL1 is the first code to run at reset, and it is loaded at the reset vector (0x0 in secure memory) via the QEMU `-bios` option. BL1 will initialize EL3, choose a primary CPU, and eventually load BL2. BL2, in turn, will load BL31 (and any optional BL32 secure payload) and the BL33 image into memory. In our setup, we will not use a BL32 (secure OS like OP-TEE) for simplicity, and will use U-Boot as BL33 (non-secure firmware). BL2 also prepares the device tree for the next stage: on QEMU, BL2 patches the DTB to add a PSCI node and set the CPU enable methods (how secondary CPUs are brought up). This ensures the Linux kernel (or U-Boot) gets a correct device tree with PSCI information.
 
 We obtain the TF-A source and build it for the QEMU platform:
 
@@ -193,21 +193,60 @@ make PLAT=qemu ARCH=aarch64 CROSS_COMPILE=${CROSS_COMPILE} DEBUG=1
 
 Let's break down this command: `PLAT=qemu` selects the QEMU virt platform support in TF-A, `ARCH=aarch64` sets 64-bit, and `CROSS_COMPILE=${CROSS_COMPILE}` uses our cross-toolchain prefix. `DEBUG=1` builds a debug version with additional log messages (useful for development; for a release build you might omit this). This initial build will produce several binaries under `build/qemu/debug/` (or `release/` if `DEBUG=0`): notably `bl1.bin`, `bl2.bin`, `bl31.bin`, and a file `fip.bin` (Firmware Image Package) if configured to produce one. However, because we did not specify a BL33 at this time, the fip may not contain a BL33 payload yet. We will address that after building U-Boot. For now, we have built the core TF-A components.
 
-(Optional) Understanding TF-A output: The BL1 is a standalone binary that will reside at the start of the flash. The FIP is a packaged binary that contains BL2, BL31, and optionally other images like BL33 and BL32. QEMU’s secure flash is organized such that BL1 occupies offset 0x0 up to 256 KB, and the FIP is placed after that offset. The size of BL1 is small (on the order of 20 KB), but QEMU expects the BL1 region to be 256 KB; the FIP follows it. We will later concatenate `bl1.bin` and `fip.bin` to create a single flash image.
+(Optional) Understanding TF-A output: The BL1 is a standalone binary that will reside at the start of the flash. The FIP is a packaged binary that contains BL2, BL31, and optionally other images like BL33 and BL32. QEMU's secure flash is organized such that BL1 occupies offset 0x0 up to 256 KB, and the FIP is placed after that offset. The size of BL1 is small (on the order of 20 KB), but QEMU expects the BL1 region to be 256 KB; the FIP follows it. We will later concatenate `bl1.bin` and `fip.bin` to create a single flash image.
 
 Before proceeding, confirm that TF-A built correctly. The build artifacts will be in `build/qemu/debug/` (since we did a debug build). We will come back to TF-A to integrate U-Boot once U-Boot is ready, so keep this directory in mind.
 
-**Important Build Parameters:** We specified `PLAT=qemu` which picks default settings for the QEMU virt platform. TF-A's platform support for QEMU knows the memory map of the `virt` machine, including device addresses, flash size, and the requirement to concatenate BL1 and FIP. (In contrast, for a real board, PLAT might be something like `raspi4` or `fvp` etc., with different addresses.) The `CROSS_COMPILE` must point to an AArch64 bare-metal GCC for building TF-A, since TF-A is freestanding (no Linux libc). Our cross toolchain is built for Linux user-space, but it works for building TF-A because it can compile freestanding code. Alternatively, one could use a dedicated AArch64 ELF toolchain. In practice, aarch64-linux-gcc works for TF-A. Setting `DEBUG=1` enables assertions and verbose logs in TF-A; for a production build use `DEBUG=0` (default). If building a release, append `PLAT=qemu` `SPD=none` to explicitly indicate no secure payload (since we aren’t using BL32 in this tutorial).
+**Important Build Parameters:** We specified `PLAT=qemu` which picks default settings for the QEMU virt platform. TF-A's platform support for QEMU knows the memory map of the `virt` machine, including device addresses, flash size, and the requirement to concatenate BL1 and FIP. (In contrast, for a real board, PLAT might be something like `raspi4` or `fvp` etc., with different addresses.) The `CROSS_COMPILE` must point to an AArch64 bare-metal GCC for building TF-A, since TF-A is freestanding (no Linux libc). Our cross toolchain is built for Linux user-space, but it works for building TF-A because it can compile freestanding code. Alternatively, one could use a dedicated AArch64 ELF toolchain. In practice, aarch64-linux-gcc works for TF-A. Setting `DEBUG=1` enables assertions and verbose logs in TF-A; for a production build use `DEBUG=0` (default). If building a release, append `PLAT=qemu` `SPD=none` to explicitly indicate no secure payload (since we aren't using BL32 in this tutorial).
 
 ### 3. Build U-Boot Bootloader
 
+U-Boot will be our Stage-2/Stage-3 bootloader (BL33) running in Normal World. After TF-A's BL31 passes control to BL33, U-Boot will execute in EL2 (if available) or EL1, set up devices, and ultimately launch the Linux kernel. We will configure U-Boot for QEMU's virt board and ensure it aligns with TF-A's expectations (e.g., load address).
+
+First, obtain U-Boot. Here we download a stable release archive (`2025.01` as an example):
+
 ```bash
-git clone https://github.com/u-boot/u-boot.git
+wget -c https://ftp.denx.de/pub/u-boot/u-boot-2025.01.tar.bz2
+tar xf u-boot-2025.01.tar.bz2
+mv u-boot-2025.01 u-boot
 cd u-boot
-git checkout v2025.01
-make CROSS_COMPILE=aarch64-unknown-linux-gnu- qemu_arm64_defconfig
-make CROSS_COMPILE=aarch64-unknown-linux-gnu- -j$(nproc)
 ```
+
+Now configure U-Boot for the QEMU ARM64 virtual board:
+
+```bash
+make qemu_arm64_defconfig
+```
+
+The `qemu_arm64_defconfig` is a predefined configuration for QEMU's AArch64 virt machine. This defconfig sets up U-Boot to run as a firmware on the virt board. By default, U-Boot expects to be loaded at address `0x40000000` (the start of DRAM on many ARM boards). However, in our case TF-A will load BL33 at `0x60000000`. We need to adjust U-Boot's link address (`TEXT_BASE`) accordingly so that U-Boot knows its starting address. We can do this via U-Boot's menuconfig:
+
+```bash
+make menuconfig
+```
+
+In the menu, navigate to **"General Setup" -> "Text Base"** and set it to `0x60000000`. This will define `CONFIG_TEXT_BASE=0x60000000`, meaning U-Boot will be linked to run from that address. (This address is chosen because TF-A's BL2 will load BL33 there in memory. The TF-A QEMU platform code uses `0x60000000` for BL33 entry point, as also indicated by TF-A's boot messages or documentation.)
+
+Next, we configure U-Boot's environment storage. By default, U-Boot may expect to store its environment (persistent variables) in non-volatile storage (SPI flash or NAND) or not at all. On QEMU virt, we don't have real flash accessible from U-Boot. A convenient method is to store the U-Boot environment in a file on the boot disk (e.g., on the FAT partition). U-Boot has a feature to save environment to a FAT filesystem. We enable this in menuconfig:
+
+Navigate to **"Environment"** settings. Disable **"Environment in flash memory"** (uncheck if set, by hittting the space bar). Enable **"Environment is in a FAT filesystem"**. Then set the interface to **"virtio"** (because our disk will appear as a virtio-blk device in QEMU) and set **"Device and partition"** to `0:1` (meaning first virtio disk, first partition). Set the **"Name of the FAT file"** to `uboot.env` (this is the file that will store environment variables).
+
+These settings correspond to `CONFIG_ENV_IS_IN_FAT=y`, `CONFIG_ENV_FAT_INTERFACE="virtio"`, `CONFIG_ENV_FAT_DEVICE_AND_PART="0:1"`, and `CONFIG_ENV_FAT_FILE="uboot.env"` in U-Boot's configuration. In effect, U-Boot will, on a `saveenv` command, write its environment to `uboot.env` on the first partition of the virtio block device, and load from there on boot if available. This provides persistency of U-Boot environment across reboots inside our QEMU setup, much like a real board's NVRAM or flash.
+
+After configuring, exit and save the changes. Now build U-Boot:
+
+```bash
+make -j$(nproc)
+```
+
+This compiles U-Boot using the cross-compiler (ensure `CROSS_COMPILE` is still set in your environment, e.g., from `env.sh`). If successful, it produces several binaries; the main ones are `u-boot` (ELF format, useful for debugging), and `u-boot.bin` (binary image). The U-Boot binary will be placed at our configured text base when executed. We can verify the embedded entry point:
+
+```bash
+aarch64-linux-readelf -h u-boot
+```
+
+Look for **"Entry point address"** in the ELF header. It should read `0x60000000`, confirming that U-Boot will start at `0x60000000`. If it shows `0x40000000`, then the text base config did not take effect – re-check the menuconfig step.
+
+U-Boot is now ready, but we need to integrate it with TF-A so that it will be loaded as BL33. The next step will combine TF-A (BL1, BL2, BL31) and U-Boot (BL33) into a single flash image. This will be done after compiling the kernel image.
 
 ### 4. Compile the Linux Kernel
 
