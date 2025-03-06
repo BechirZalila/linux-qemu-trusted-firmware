@@ -461,14 +461,14 @@ At the U-Boot prompt, we need to boot the Linux kernel. We have copied the kerne
 => fatls virtio 0:1
 ```
 
-This means: list directory of interface virtio drive 0, partition 1. It should show Image and virt.dtb (and possibly uboot.env if it exists). If this fails, it might mean U-Boot did not detect the drive; check that CONFIG_VIRTIO_BLK=y was in U-Boot config (it should be by default for qemu_arm64). If the files are listed, proceed to load them:
+This means: list directory of interface virtio drive 0, partition 1. It should show `Image` and `virt.dtb` (and possibly `uboot.env` if it exists). If this fails, it might mean U-Boot did not detect the drive; check that `CONFIG_VIRTIO_BLK=y` was in U-Boot config (it should be by default for `qemu_arm64`). If the files are listed, proceed to load them:
 
 ```bash
 => fatload virtio 0:1 ${kernel_addr_r} Image
 => fatload virtio 0:1 ${fdt_addr} virt.dtb
 ```
 
-These commands load the kernel and device tree into RAM. ${kernel_addr_r} and ${fdt_addr} are environment variables set by U-Boot’s default environment (they point to safe load addresses in RAM, typically 0x40400000 or similar for kernel, and another address for fdt). We can check printenv kernel_addr_r to see the actual address. Make sure these addresses do not overlap. Usually, kernel_addr_r is something like 0x40800000 and fdt_addr like 0x4f000000, which in 1GB RAM are fine. Now set the kernel boot arguments:
+These commands load the kernel and device tree into RAM. `${kernel_addr_r}` and `${fdt_addr}` are environment variables set by U-Boot’s default environment (they point to safe load addresses in RAM, typically `0x40400000` or similar for kernel, and another address for fdt). We can check printenv `kernel_addr_r` to see the actual address. Make sure these addresses do not overlap. Usually, `kernel_addr_r` is something like `0x40800000` and `fdt_addr` like `0x4f000000`, which in 1GB RAM are fine. Now set the kernel boot arguments:
 
 ```bash
 => setenv bootargs "console=ttyAMA0 root=/dev/vda2 rw"
@@ -482,9 +482,9 @@ This sets the environment variable bootargs that the Linux kernel will receive f
 => booti ${kernel_addr_r} - ${fdt_addr}
 ```
 
-The booti syntax is booti <kernel_address> <initrd_address> <fdt_address> for booting an uncompressed Linux AArch64 kernel. We have no initrd, so we use - to indicate none. U-Boot should respond with messages like “Loading Device Tree to ...” and then “Starting kernel ...”. At that point, control is transferred to the Linux kernel.
+The `booti` syntax is `booti <kernel_address> <initrd_address> <fdt_address>` for booting an uncompressed Linux AArch64 kernel. We have no initrd, so we use `-` to indicate none. U-Boot should respond with messages like “Loading Device Tree to ...” and then “Starting kernel ...”. At that point, control is transferred to the Linux kernel.
 
-Now the Linux kernel should boot. Early on, it will print messages via the serial console (which we’ve set to ttyAMA0). You should see the typical Linux boot log: the kernel version banner, information about the CPUs (it should detect 2 CPUs and bring them up using PSCI), memory, virtio devices (it should identify a virtio block device vda, and maybe entropy device etc.), then it will try to mount the root filesystem on /dev/vda2. At this stage, the kernel hangs at a Kernel Panic saying it cannot mount the root file system, this is normal since wi did not build it yet. 
+Now the Linux kernel should boot. Early on, it will print messages via the serial console (which we’ve set to `ttyAMA0`). You should see the typical Linux boot log: the kernel version banner, information about the CPUs (it should detect 2 CPUs and bring them up using PSCI), memory, virtio devices (it should identify a virtio block device vda, and maybe entropy device etc.), then it will try to mount the root filesystem on `/dev/vda2`. At this stage, the kernel hangs at a Kernel Panic saying it cannot mount the root file system, this is normal since wi did not build it yet. 
 
 **Saving the Boot Command (Optional):** Right now, we manually entered commands in U-Boot to boot Linux. To automate this for future boots, we can use U-Boot’s saveenv to persist the bootcmd. First, while still in U-Boot (before booti or if you reset and break into U-Boot again), set the bootcmd variable:
 
@@ -494,11 +494,11 @@ Now the Linux kernel should boot. Early on, it will print messages via the seria
 => saveenv
 ```
 
-This writes the environment to uboot.env on the FAT partition (since we configured that). Now, upon next boot, U-Boot will automatically execute bootcmd after a timeout, which will load the kernel and dtb and boot Linux without manual intervention. You can test this by resetting QEMU (if at the QEMU monitor, type reset, or simply exit and re-run QEMU). U-Boot should count down and then boot Linux.
+This writes the environment to uboot.env on the FAT partition (since we configured that). Now, upon next boot, U-Boot will automatically execute `bootcmd` after a timeout, which will load the kernel and dtb and boot Linux without manual intervention. You can test this by resetting QEMU (if at the QEMU monitor, type reset, or simply exit and re-run QEMU). U-Boot should count down and then boot Linux.
 
 ### 5. Prepare the Root Filesystem
 
-The Linux kernel by itself is not useful without a root filesystem. For the root filesystem, we use BusyBox, which provides a suite of Unix utilities and can serve as PID1 (init process). BusyBox can be built as a single static binary implementing essential commands (sh, ls, etc.), ideal for an embedded system.
+The Linux kernel by itself is not useful without a root filesystem. For the root filesystem, we use BusyBox, which provides a suite of Unix utilities and can serve as PID1 (init process). BusyBox can be built as a single static binary implementing essential commands (`sh`, `ls`, etc.), ideal for an embedded system.
 
 Download and extract BusyBox (1.36.1 is used here):
 
@@ -514,20 +514,20 @@ Configure BusyBox:
 make ARCH=arm64 CROSS_COMPILE=aarch64-linux- defconfig
 ```
 
-This sets up a default configuration. The default BusyBox config is geared towards a shared-library build using glibc. We want a static binary (no external library dependencies) so that our rootfs does not need glibc or musl libraries. Enable static linking:
+This sets up a default configuration. The default BusyBox config is geared towards a shared-library build using the libc. We want a static binary (no external library dependencies) so that our rootfs does not need glibc or musl libraries. Enable static linking:
 
 ```bash
 make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- menuconfig
 ```
 
-In BusyBox menuconfig, go to Settings and activate “Build static binary (no shared libs)” (this sets CONFIG_STATIC=y). You can also adjust other applet selections if desired, but the default set is fine for basic functionality. Save the config. Now build and install BusyBox:
+In BusyBox `menuconfig`, go to Settings and activate `“Build static binary (no shared libs)”` (this sets `CONFIG_STATIC=y`). You can also adjust other applet selections if desired, but the default set is fine for basic functionality. Save the config. Now build and install BusyBox:
 
 ```bash
 make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE} -j$(nproc)  
 make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE} install
 ```
 
-The install step will create a _install directory in the BusyBox source tree, containing the files of a minimal filesystem. Let’s examine _install: it should have directories like bin, sbin, etc, usr/bin, and symlinks for busybox applets. BusyBox’s install target effectively performs make CONFIG_PREFIX=_install install, which populates a fake rootfs.
+The install step will create a `_install` directory in the BusyBox source tree, containing the files of a minimal filesystem. Let’s examine `_install`: it should have directories like `bin`, `sbin`, `usr/bin`, and symlinks for busybox applets. BusyBox’s install target effectively performs `make CONFIG_PREFIX=_install install`, which populates a fake rootfs.
 
 Now we will construct our actual root filesystem in the ext4 partition. Mount the ext4 partition and copy the files:
 
@@ -541,13 +541,13 @@ cd part2
 sudo cp -a ../busybox/_install/* .
 ```
 
-The -a flag copies all files preserving permissions. This places busybox binary and symlinks into the root of our ext4 volume. Next, create necessary directories that BusyBox did not install by default:
+The `-a` flag copies all files preserving permissions. This places busybox binary and symlinks into the root of our ext4 volume. Next, create necessary directories that BusyBox did not install by default:
 
 ```bash
 sudo mkdir -p etc/init.d proc sys dev
 ```
 
-We create /etc, /etc/init.d, /proc, /sys, and /dev in the new rootfs. proc and sys are for the procfs and sysfs which we will mount at boot. dev is for device nodes; modern Linux with devtmpfs will populate this at runtime if enabled. We also need an init script. BusyBox will look for an initialization script at /etc/init.d/rcS by default (because BusyBox’s init system follows a simple RC script approach if no /etc/inittab is provided). We create this rcS script:
+We create `/etc`, `/etc/init.d`, `/proc`, `/sys`, and `/dev` in the new rootfs. `proc` and `sys` are for the `procfs` and `sysfs` which we will mount at boot. `dev` is for device nodes; modern Linux with `devtmpfs` will populate this at runtime if enabled. We also need an init script. BusyBox will look for an initialization script at `/etc/init.d/rcS` by default (because BusyBox’s init system follows a simple RC script approach if no `/etc/inittab` is provided). We create this `rcS` script:
 
 ```bash
 sudo sh -c 'echo -e "#!/bin/sh\nmount -t proc none /proc\nmount -t sysfs none /sys" > etc/init.d/rcS'
@@ -559,7 +559,7 @@ Then make it executable:
 sudo chmod a+x etc/init.d/rcS
 ```
 
-The script will mount the proc filesystem and sysfs at boot. We do not explicitly mount devtmpfs here; the Linux kernel (if configured with CONFIG_DEVTMPFS_MOUNT) will automatically mount a tmpfs at /dev early on. If not, we might add mount -t devtmpfs none /dev to rcS, but most distribution kernels, including defconfig, mount devtmpfs for us. We keep rcS minimal: it’s essentially the startup sequence. After rcS, BusyBox’s init will typically spawn a shell on the console (because we have no inittab, BusyBox falls back to a single shell on ttyAMA0). This means when the system boots, we should get a shell prompt directly.
+The script will mount the `proc` filesystem and `sysfs` at boot. We do not explicitly mount `devtmpfs` here; the Linux kernel (if configured with `CONFIG_DEVTMPFS_MOUNT`) will automatically mount a `devtmpfs` at `/dev` early on. If not, we might add `mount -t devtmpfs none /dev` to `rcS`, but most distribution kernels, including defconfig, mount devtmpfs for us. We keep `rcS` minimal: it’s essentially the startup sequence. After rcS, BusyBox’s init will typically spawn a shell on the console (because we have no `inittab`, BusyBox falls back to a single shell on `ttyAMA0`). This means when the system boots, we should get a shell prompt directly.
 
 Now our root filesystem partition has BusyBox and basic directories. Unmount and detach the loop:
 
@@ -579,9 +579,9 @@ qemu-system-aarch64 -machine virt,secure=on -cpu cortex-a53 -m 1024 -smp 2 \
     -device virtio-blk-device,drive=hd0 -drive if=none,id=hd0,file=disk.img,format=raw
 ```
 
-Provided everything is correct, it will find the ext4 partition, mount it, and then invoke the init process. Since we are using BusyBox with no custom init system, BusyBox’s built-in init should run, execute our /etc/init.d/rcS. That script will mount proc and sysfs. After rcS completes, typically BusyBox will spawn a shell on the console (on ttyAMA0) as root. You should then see a prompt (likely # or similar). If you get a prompt, congratulations – you have a working Linux system!
+Provided everything is correct, it will find the ext4 partition, mount it, and then invoke the init process. Since we are using BusyBox with no custom init system, BusyBox’s built-in init should run, execute our `/etc/init.d/rcS`. That script will mount proc and sysfs. After `rcS` completes, typically BusyBox will spawn a shell on the console (on ttyAMA0) as root. You should then see a prompt (likely # or similar). If you get a prompt, congratulations – you have a working Linux system!
 
-At the shell, you can run some basic commands to test: ls / (should show directories like bin, sbin, etc, proc, sys, dev), uname -a (to see kernel version and architecture), dmesg | less (to review kernel messages, though less might not be available in our BusyBox, you can use dmesg alone). You can also verify that both CPUs are online (e.g., grep -i cpu /proc/cpuinfo should list 2 CPUs) and that the root filesystem is mounted read-write (mount command output).
+At the shell, you can run some basic commands to test: `ls /` (should show directories like bin, sbin, etc, proc, sys, dev), `uname -a` (to see kernel version and architecture), `dmesg | less` (to review kernel messages, though less might not be available in our BusyBox, you can use `dmesg` alone). You can also verify that both CPUs are online (e.g., `grep -i cpu /proc/cpuinfo` should list 2 CPUs) and that the root filesystem is mounted read-write (`mount` command output).
 
 ## Troubleshooting
 
@@ -598,11 +598,7 @@ make menuconfig
 
 ### U-Boot Fails to Load Kernel
 
-Double-check that the kernel and DTB are present in the boot partition:
-
-```bash
-ls /mnt/boot/
-```
+Double-check that the kernel and DTB are present in the boot partition.
 
 ### QEMU Serial Output Not Showing Kernel Logs
 
