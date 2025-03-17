@@ -20,11 +20,11 @@ Ensure you have an Ubuntu 24.04 machine with the following dependencies installe
 
 ```bash
 sudo apt update
-sudo apt install build-essential git autoconf automake libtool libexpat-dev \
-    libncurses5-dev libgnutls28-dev bison flex patch gawk texinfo help2man \
-    gperf python3-dev swig python3-setuptools python3-pyelftools libgmp-dev \
-    libmpc-dev libmpfr-dev libisl-dev libssl-dev bc device-tree-compiler \
-    parted qemu-system-arm qemu-user
+sudo apt install build-essential git autoconf automake libtool libtool-bin \
+    libexpat-dev libncurses5-dev libgnutls28-dev bison flex patch gawk \
+    texinfo help2man gperf python3-dev swig python3-setuptools \
+    python3-pyelftools libgmp-dev libmpc-dev libmpfr-dev libisl-dev \
+    libssl-dev bc device-tree-compiler parted qemu-system-arm qemu-user
 ```
 
 The above installs a broad range of packages: compiler and build tools (build-essential, bison, flex, etc.), libraries needed by cross-compilation frameworks (GMP, MPC, MPFR for GCC, OpenSSL for certain firmware), the Device Tree Compiler (device-tree-compiler provides the dtc tool), QEMU for ARM/AArch64, and utilities like parted for disk partitioning. It also includes qemu-user which provides user-mode QEMU (useful for testing binaries with qemu-aarch64 interpreter). If you prefer to use a pre-built cross-compiler, you should also install the appropriate cross GCC (for example, gcc-aarch64-linux-gnu and related binutils). In our case, we will build a cross-compiler from source to demonstrate the process.
@@ -56,7 +56,7 @@ First, create a working directory for the lab (this could be under /opt or your 
 
 ```bash
 mkdir -p /opt/emblin/armv8-lab/tarballs  
-cd /opt/emblin/armv8-lab/tarballs
+cd /opt/emblin/armv8-lab
 ```
 
 Now clone the Crosstool-NG repository and checkout a known stable release:
