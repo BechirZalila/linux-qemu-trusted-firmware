@@ -188,7 +188,7 @@ git checkout v2.12.0
 Now compile TF-A for QEMU:
 
 ```bash
-make PLAT=qemu ARCH=aarch64 CROSS_COMPILE=${CROSS_COMPILE} DEBUG=1
+make PLAT=qemu ARCH=aarch64 CROSS_COMPILE=${CROSS_COMPILE} DEBUG=1 -j$(nproc)
 ```
 
 Let's break down this command: `PLAT=qemu` selects the QEMU virt platform support in TF-A, `ARCH=aarch64` sets 64-bit, and `CROSS_COMPILE=${CROSS_COMPILE}` uses our cross-toolchain prefix. `DEBUG=1` builds a debug version with additional log messages (useful for development; for a release build you might omit this). This initial build will produce several binaries under `build/qemu/debug/` (or `release/` if `DEBUG=0`): notably `bl1.bin`, `bl2.bin`, `bl31.bin`, and a file `fip.bin` (Firmware Image Package) if configured to produce one. However, because we did not specify a BL33 at this time, the fip may not contain a BL33 payload yet. We will address that after building U-Boot. For now, we have built the core TF-A components.
@@ -259,8 +259,8 @@ dd if=/dev/zero of=disk.img bs=1M count=256
 This creates a 256 MB file filled with zeros. The `dd` command uses a block size of 1MiB and writes 256 blocks (resulting in 256 MiB). Next, partition the image with parted:
 
 ```bash
-parted disk.img --script mklabel msdos  
-parted disk.img --script mkpart primary fat32 1MiB 100MiB  
+parted disk.img --script mklabel msdos
+parted disk.img --script mkpart primary fat32 1MiB 100MiB
 parted disk.img --script mkpart primary ext4 100MiB 100%
 ```
 
@@ -308,7 +308,7 @@ We will rebuild TF-A with U-Boot included as BL33. Clean the previous build and 
 ```bash
 make distclean  
 make PLAT=qemu ARCH=aarch64 CROSS_COMPILE=${CROSS_COMPILE} DEBUG=1 \
-     BL33=../u-boot/u-boot.bin all fip
+     BL33=../u-boot/u-boot.bin all fip -j$(nproc)
 ```
 
 This command does a full rebuild (`all`) and creates a firmware image package (`fip`). By specifying `BL33=../u-boot/u-boot.bin`, we include the U-Boot binary as the BL33 payload in the FIP. After this, in `build/qemu/debug/` we will have a new `fip.bin` alongside a new `bl1.bin` (and other BL images). The FIP contains BL2, BL31, BL33 = U-Boot (and potentially empty slots for BL32 since we didn't specify one).
@@ -393,7 +393,7 @@ To avoid any uncertainty, we will use approach (2): dump the QEMU device tree an
 Obtaining the QEMU device tree: QEMU provides a convenient option to dump the device tree of the `virt` machine without booting an OS. We can use:
 
 ```bash
-qemu-system-aarch64 -machine virt,secure=on -machine dumpdtb=qemu.dtb -cpu cortex-a53 -m 1024
+qemu-system-aarch64 -machine virt,secure=on,dumpdtb=qemu.dtb -cpu cortex-a53 -m 1024
 ```
 
 This command will create a file `qemu.dtb` containing the device tree for a virt machine with the given parameters (we include `secure=on` because that slightly affects the DTB by adding secure firmware nodes). We should include any devices we plan to attach (like virtio-blk) in this dump command, because the DTB will only list devices that are present. For example:
@@ -418,7 +418,7 @@ In all cases the found DTB must be decompiled and then recompiled again:
 dtc -I dtb -O dts -o virt.dts qemu.dtb
 ```
 
-Open virt.dts in an editor and find the psci node. It should look like:
+Open virt.dts in an editor and find the psci node. **In case it exists**, it should look like:
 
 ```c
 psci {  
@@ -505,6 +505,7 @@ Download and extract BusyBox (1.36.1 is used here):
 ```bash
 wget -c "https://www.busybox.net/downloads/busybox-1.36.1.tar.bz2"
 tar xf busybox-1.36.1.tar.bz2
+mv busybox-1.36.1 busybox
 cd busybox
 ```
 
